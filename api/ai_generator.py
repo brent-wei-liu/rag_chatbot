@@ -1,4 +1,5 @@
 import anthropic
+from core.config import config
 from typing import List, Optional, Dict, Any
 
 class AIGenerator:
@@ -12,7 +13,8 @@ Available Tools:
 2. **get_course_outline** — Get a course's full outline: title, course link, and complete lesson list (number and title for each lesson). Use this for questions about course structure, outlines, what lessons a course contains, or what a course covers at a high level.
 
 Tool Usage:
-- **One tool call per query maximum**
+- **Up to 2 tool calls per query**: if the first result is insufficient or you need to look up something else (e.g. check an outline first, then search a specific lesson), you may call a tool a second time with a refined query.
+- **Do not call more than 2 tools**. If the first two calls didn't find the answer, state that clearly instead of guessing.
 - For outline/structure questions (e.g. "What is the outline of X?", "What lessons does X have?"): use **get_course_outline** and present the result exactly as a bullet list. Do NOT use tables. Format each lesson as a bullet point like `- Lesson N: Title`
 - For content/detail questions: use **search_course_content**
 - Synthesize tool results into accurate, fact-based responses
@@ -49,91 +51,63 @@ Provide only the direct answer to what was asked.
                          tools: Optional[List] = None,
                          tool_manager=None) -> str:
         """
-        Generate AI response with optional tool usage and conversation context.
-        
-        Args:
-            query: The user's question or request
-            conversation_history: Previous messages for context
-            tools: Available tools the AI can use
-            tool_manager: Manager to execute tools
-            
-        Returns:
-            Generated response as string
+        Generate AI response with optional multi-round tool usage.
+
+        Runs up to config.MAX_TOOL_ROUNDS rounds of tool calls. If the model
+        still wants to call tools after the last round, a final request is
+        sent WITHOUT tools to force a text answer.
         """
-        
-        # Build system content efficiently - avoid string ops when possible
         system_content = (
             f"{self.SYSTEM_PROMPT}\n\nPrevious conversation:\n{conversation_history}"
-            if conversation_history 
+            if conversation_history
             else self.SYSTEM_PROMPT
         )
-        
-        # Prepare API call parameters efficiently
-        api_params = {
-            **self.base_params,
-            "messages": [{"role": "user", "content": query}],
-            "system": system_content
-        }
-        
-        # Add tools if available
-        if tools:
-            api_params["tools"] = tools
-            api_params["tool_choice"] = {"type": "auto"}
-        
-        # Get response from Claude
-        response = self.client.messages.create(**api_params)
-        
-        # Handle tool execution if needed
-        if response.stop_reason == "tool_use" and tool_manager:
-            return self._handle_tool_execution(response, api_params, tool_manager)
-        
-        # Return direct response
-        return response.content[0].text
-    
-    def _handle_tool_execution(self, initial_response, base_params: Dict[str, Any], tool_manager):
-        """
-        Handle execution of tool calls and get follow-up response.
-        
-        Args:
-            initial_response: The response containing tool use requests
-            base_params: Base API parameters
-            tool_manager: Manager to execute tools
-            
-        Returns:
-            Final response text after tool execution
-        """
-        # Start with existing messages
-        messages = base_params["messages"].copy()
-        
-        # Add AI's tool use response
-        messages.append({"role": "assistant", "content": initial_response.content})
-        
-        # Execute all tool calls and collect results
-        tool_results = []
-        for content_block in initial_response.content:
-            if content_block.type == "tool_use":
-                tool_result = tool_manager.execute_tool(
-                    content_block.name, 
-                    **content_block.input
-                )
-                
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": content_block.id,
-                    "content": tool_result
-                })
-        
-        # Add tool results as single message
-        if tool_results:
+
+        messages: List[Dict[str, Any]] = [{"role": "user", "content": query}]
+
+        # Tool-use loop: up to MAX_TOOL_ROUNDS rounds where the model is allowed
+        # to call tools.
+        for _ in range(config.MAX_TOOL_ROUNDS):
+            api_params = {
+                **self.base_params,
+                "messages": messages,
+                "system": system_content,
+            }
+            if tools and tool_manager:
+                api_params["tools"] = tools
+                api_params["tool_choice"] = {"type": "auto"}
+
+            response = self.client.messages.create(**api_params)
+
+            if response.stop_reason != "tool_use" or not tool_manager:
+                return self._extract_text(response)
+
+            # Append assistant's tool_use turn, execute tools, append results.
+            messages.append({"role": "assistant", "content": response.content})
+            tool_results = []
+            for block in response.content:
+                if block.type == "tool_use":
+                    result = tool_manager.execute_tool(block.name, **block.input)
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result,
+                    })
             messages.append({"role": "user", "content": tool_results})
-        
-        # Prepare final API call without tools
-        final_params = {
+
+        # Exhaustion fallback: budget used up but model still wants tools.
+        # Call once more WITHOUT tools to force a text answer.
+        final = self.client.messages.create(
             **self.base_params,
-            "messages": messages,
-            "system": base_params["system"]
-        }
-        
-        # Get final response
-        final_response = self.client.messages.create(**final_params)
-        return final_response.content[0].text
+            messages=messages,
+            system=system_content,
+        )
+        return self._extract_text(final)
+
+    @staticmethod
+    def _extract_text(response) -> str:
+        """Return the first text block from a Claude response, or empty string."""
+        for block in response.content:
+            if getattr(block, "type", None) == "text":
+                return block.text
+        return ""
