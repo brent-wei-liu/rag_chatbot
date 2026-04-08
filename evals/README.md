@@ -107,6 +107,40 @@ NDCG 能处理 MRR 处理不了的两件事：
 加上了课程/课时锚点，让强信号更突出，但同时把同一节内不同 chunk 在
 embedding 空间里推得更近，造成顶端竞争更紧。
 
+### 2026-04-08 — 多轮 tool-use（MAX_TOOL_ROUNDS=2）
+
+**改动**：`api/ai_generator.py` 从单轮 tool-use 改为最多 2 轮的 `while` 循环，
+耗尽后用一次无工具的请求强制出文本。`CourseSearchTool.last_sources` 从
+"覆盖"改为"追加 + 按 `(label, link)` 去重"，避免 round 1 的 sources 被 round 2
+覆盖。脚本：`evals/ab_multiround.py`。
+
+**retrieval eval**：完全不变（`mrr=0.8033, recall@1=0.7109, recall@3=0.8984,
+recall@5=0.9219`）——这个 eval 只测 `VectorStore.search()`，不走 ai_generator，
+所以对本改动不敏感。只起"没搞坏底层"的 sanity 作用。
+
+**真正的信号来自手工 A/B**（4 个刁钻 query，见 `ab_multiround.py`）：
+
+| Query | N=1 | N=2 |
+|---|---|---|
+| "那门讲 compression 的课里，那个需要一个额外小模型的技术叫什么？" | **空答案** | ✅ 正确识别 LLMLingua |
+| "MCP 课程的 lesson 5 具体讲了什么？" | ✅ 3 要点 | ✅ 3 要点（持平） |
+| "HyDE 在哪门课里讲过？" | **空答案**，5 sources 全搜错了课（MCP） | ✅ 正确识别 Chroma 课 Lesson 2/6，sources 10 条 |
+| "computer use 课里关于 vision transformer 的内容" | **空答案** | ✅ 诚实答 "没讲 ViT，但讲了..." |
+
+**解读**：3/4 query 上 N=2 完胜，1/4 持平。机制最清楚的是 **HyDE 那道**：
+
+- N=1 时 Claude 第一次搜索搜错了课（sources 全是 MCP 的 lesson），
+  没有 round 2 机会，只能憋出空答案。
+- N=2 时看到第一次结果不对，第二次改写 query 搜 Chroma 课，
+  sources 从 5→10，成功定位 HyDE 在 Lesson 2/6。
+
+**N=1 空答案的机制**：耗尽 tool-use 预算后强制无工具作答时，模型看着不够用
+的第一手结果"说不出话"，返回空的 content block。这不是新引入的 bug——旧单
+轮实现也是这样，只是之前没拿刁钻 query 测过。
+
+**成本**：在简单 query 上模型通常只调一次工具就返回文本，round 2 不会被触发，
+所以平均成本上升很小。只有当第一次结果不够时才会触发 round 2。
+
 ## Sanity 检查
 
 - 抽检 `groundtruth_retrieval.jsonl` 中的 10 条记录——问题应该是**改写**，
