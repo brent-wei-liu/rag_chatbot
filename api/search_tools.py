@@ -114,8 +114,13 @@ class CourseSearchTool(Tool):
 
             formatted.append(f"{header}\n{doc}")
 
-        # Store sources for retrieval
-        self.last_sources = sources
+        # Accumulate sources across multi-round tool use; dedupe by (label, link).
+        seen = {(s["label"], s["link"]) for s in self.last_sources}
+        for s in sources:
+            key = (s["label"], s["link"])
+            if key not in seen:
+                self.last_sources.append(s)
+                seen.add(key)
 
         return "\n\n".join(formatted)
 
