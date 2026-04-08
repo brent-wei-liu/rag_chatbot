@@ -1,130 +1,149 @@
-# Course Materials RAG System
+# 课程资料 RAG 系统
 
-A Retrieval-Augmented Generation (RAG) system designed to answer questions about course materials using semantic search and AI-powered responses.
+一个基于检索增强生成（RAG）的系统，通过语义搜索和 AI 驱动的回答来解答有关课程资料的问题。
 
-## Overview
+## 概述
 
-This application is a full-stack web application that enables users to query course materials and receive intelligent, context-aware responses. It uses ChromaDB for vector storage, Anthropic's Claude for AI generation, and provides a web interface for interaction.
+本应用是一个全栈 Web 应用，使用户能够查询课程资料并获得智能的、上下文感知的回答。它使用 ChromaDB 进行向量存储，使用 Anthropic 的 Claude 进行 AI 生成，并提供 Web 界面进行交互。
 
-## Tech Stack
+## 技术栈
 
-| Layer | Technology | Version / Notes |
+| 层级 | 技术 | 版本 / 说明 |
 |-------|-----------|-----------------|
-| **Application** | FastAPI | 0.116.1 |
+| **应用** | FastAPI | 0.116.1 |
 | | Uvicorn | 0.35.0 |
-| **AI** | Anthropic SDK | 0.58.2 (Model: `claude-opus-4-6`) |
-| | sentence-transformers | 5.0.0 (Model: `all-MiniLM-L6-v2`) |
-| **Data** | ChromaDB | 1.0.15 |
-| **Frontend** | HTML / CSS / JS | Static, no framework |
-| **Testing** | Playwright | Via pytest-playwright |
+| **AI** | Anthropic SDK | 0.58.2（模型：`claude-opus-4-6`） |
+| | sentence-transformers | 5.0.0（模型：`all-MiniLM-L6-v2`） |
+| **数据** | ChromaDB | 1.0.15 |
+| **前端** | HTML / CSS / JS | 静态，无框架 |
+| **测试** | Playwright | 通过 pytest-playwright |
 | | pytest | 9.0+ |
-| **Tooling** | Python | 3.13+ |
-| | uv | Package manager |
+| **工具链** | Python | 3.13+ |
+| | uv | 包管理器 |
 | | python-dotenv | 1.1.1 |
 | | python-multipart | 0.0.20 |
 
-## RAG Search Design: Tool Use vs Direct Injection
+## RAG 检索设计：工具调用 vs 直接注入
 
-Traditional RAG systems use a direct injection approach: take the user's question, search the vector database, and stuff the results into the prompt. This project takes a different approach — it gives Claude a **search tool** and lets the AI decide how to search.
+传统 RAG 系统采用直接注入方式：拿到用户的问题，搜索向量数据库，然后把结果塞进 prompt。本项目采取了不同的方式——它给 Claude 一个**搜索工具**，让 AI 自己决定如何搜索。
 
-| | Direct Injection | Tool Use (This Project) |
+| | 直接注入 | 工具调用（本项目） |
 |---|---|---|
-| **Search query** | User's raw question | Claude crafts optimized search terms |
-| **Filtering** | Hard-coded or none | Claude decides whether to filter by course/lesson |
-| **Flow** | Question → Search → Prompt → Answer | Question → Claude → Tool Call → Search → Answer |
+| **搜索查询** | 用户的原始问题 | Claude 构造优化后的搜索词 |
+| **过滤** | 硬编码或无 | Claude 决定是否按课程/课时过滤 |
+| **流程** | 问题 → 搜索 → Prompt → 回答 | 问题 → Claude → 工具调用 → 搜索 → 回答 |
 
-The key component is `CourseSearchTool` (`backend/search_tools.py`), which wraps the ChromaDB vector store as an Anthropic tool-use compatible tool. When a user asks a question, Claude receives the question along with the tool definition, decides what to search for (and whether to filter by course name or lesson number), invokes the tool, receives the results, and then generates a grounded answer.
+关键组件是 `CourseSearchTool`（`api/search_tools.py`），它将 ChromaDB 向量库封装为兼容 Anthropic 工具调用的工具。当用户提问时，Claude 接收问题和工具定义，决定搜索什么内容（以及是否按课程名或课时编号过滤），调用工具，接收结果，然后生成有依据的回答。
 
-The underlying search still hits the local ChromaDB — the tool just lets **Claude drive the search strategy** instead of hard-coding it in the backend.
+底层搜索仍然是访问本地 ChromaDB——工具只是让 **Claude 主导搜索策略**，而不是在后端硬编码。
 
-## Prerequisites
+## 先决条件
 
-- Python 3.13 or higher
-- uv (Python package manager)
-- An Anthropic API key (for Claude AI)
-- **For Windows**: Use Git Bash to run the application commands - [Download Git for Windows](https://git-scm.com/downloads/win)
+- Python 3.13 或更高版本
+- uv（Python 包管理器）
+- Anthropic API 密钥（用于 Claude AI）
+- **Windows 用户**：使用 Git Bash 运行应用命令 - [下载 Git for Windows](https://git-scm.com/downloads/win)
 
-## Installation
+## 安装
 
-1. **Install uv** (if not already installed)
+1. **安装 uv**（如果尚未安装）
    ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
 
-2. **Install Python dependencies**
+2. **安装 Python 依赖**
    ```bash
    uv sync
    ```
 
-3. **Set up environment variables**
+3. **配置环境变量**
 
-   Create a `.env` file in the root directory:
+   在根目录创建 `.env` 文件：
    ```bash
    ANTHROPIC_API_KEY=your_anthropic_api_key_here
    ```
 
-## Running the Application
+## 项目结构
 
-### Quick Start
+代码按职责拆为三个顶层模块：
 
-Use the provided shell script:
+| 目录 | 职责 | README |
+|---|---|---|
+| `core/` | 共享代码：Pydantic 模型、配置、ChromaDB 封装 | — |
+| `db/` | 离线数据层：文档解析、摄取 CLI、ChromaDB 持久化目录 | [db/README.md](db/README.md) |
+| `api/` | 在线 FastAPI 服务：HTTP 接口、Claude tool-use 编排、会话管理 | [api/README.md](api/README.md) |
+| `evals/` | 检索评估工具（Recall@k、MRR） | [evals/README.md](evals/README.md) |
+| `frontend/` | 静态 HTML/CSS/JS 前端 | — |
+
+`api/` 对向量库**只读**，`db/` 负责**写入**——两者通过 `core/vector_store` 共享同一份 ChromaDB 数据，但运行时完全解耦。
+
+## 运行应用
+
+### 快速启动
+
+使用提供的 shell 脚本（先摄取文档，再启动 API）：
 ```bash
 chmod +x run.sh
 ./run.sh
 ```
 
-### Manual Start
+### 手动启动
+
+分两步：
 
 ```bash
-cd backend
-uv run uvicorn app:app --reload --port 8000
+# 1. 摄取文档到 ChromaDB（幂等，已存在的课程会跳过）
+uv run python -m db.ingest --docs docs
+
+# 2. 启动 API
+uv run uvicorn api.app:app --reload --port 8000
 ```
 
-The application will be available at:
-- Web Interface: `http://localhost:8000`
-- API Documentation: `http://localhost:8000/docs`
+应用将运行于：
+- Web 界面：`http://localhost:8000`
+- API 文档：`http://localhost:8000/docs`
 
-## Testing
+## 测试
 
-The project includes end-to-end UI tests using Playwright. Tests mock all backend API calls via route interception, so no API key or running backend is required.
+项目包含使用 Playwright 编写的端到端 UI 测试。测试通过路由拦截 mock 所有后端 API 调用，因此无需 API 密钥或运行中的后端。
 
-### Setup
+### 安装
 
 ```bash
-# Install test dependencies
+# 安装测试依赖
 uv sync --extra test
 
-# Install Playwright browsers (one-time)
+# 安装 Playwright 浏览器（一次性）
 uv run playwright install chromium
 ```
 
-### Running Tests
+### 运行测试
 
 ```bash
-# Run all UI tests
+# 运行所有 UI 测试
 uv run pytest tests/test_ui.py -v
 
-# Run a specific test
+# 运行指定测试
 uv run pytest tests/test_ui.py::test_send_message -v
 
-# Run with a visible browser for debugging
+# 以可见浏览器运行（便于调试）
 uv run pytest tests/test_ui.py -v --headed
 
-# Run with slow motion for visual debugging
+# 以慢动作运行（便于可视化调试）
 uv run pytest tests/test_ui.py -v --headed --slowmo 500
 ```
 
-### Test Coverage
+### 测试覆盖
 
-| Test | What it verifies |
+| 测试 | 验证内容 |
 |------|-----------------|
-| `test_page_loads` | Page title, input, send button, and welcome message render |
-| `test_course_stats_load` | Sidebar displays course count and titles |
-| `test_send_message` | User and assistant messages appear in chat |
-| `test_loading_state` | Loading spinner and disabled input while waiting |
-| `test_suggested_questions` | Clicking a suggestion sends the query |
-| `test_sources_displayed` | Sources shown in collapsible after response |
-| `test_error_handling` | Error message displayed on API failure |
-| `test_enter_key_sends` | Enter key triggers message send |
-| `test_empty_input_no_send` | Empty input does nothing |
-| `test_session_id_persistence` | Session ID carried across requests |
+| `test_page_loads` | 页面标题、输入框、发送按钮和欢迎消息正常渲染 |
+| `test_course_stats_load` | 侧边栏显示课程数量和标题 |
+| `test_send_message` | 用户和助手消息出现在聊天中 |
+| `test_loading_state` | 等待时显示加载动画并禁用输入 |
+| `test_suggested_questions` | 点击建议会发送查询 |
+| `test_sources_displayed` | 回答后的可折叠区域显示来源 |
+| `test_error_handling` | API 失败时显示错误消息 |
+| `test_enter_key_sends` | 回车键触发消息发送 |
+| `test_empty_input_no_send` | 空输入无操作 |
+| `test_session_id_persistence` | 会话 ID 在多次请求间保持 |

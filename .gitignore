@@ -1,6 +1,5 @@
 # Environment variables
 .env
-backend/.env
 
 # Python
 __pycache__/
@@ -15,7 +14,7 @@ env/
 ENV/
 
 # ChromaDB
-backend/chroma_db/
+db/chroma_db/
 
 # Uploads
 uploads/
