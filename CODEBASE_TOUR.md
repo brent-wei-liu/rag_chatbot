@@ -143,16 +143,35 @@ uv run python -m db.ingest --docs docs --clear   # 清空后重建
 
 ### 4. Claude 客户端 + 工具循环 / `api/ai_generator.py`
 
-这是**单轮 tool-use 循环**：
+**多轮 tool-use 循环**，最多 `config.MAX_TOOL_ROUNDS = 2` 轮：
 
-1. **第一次请求**：把 query、conversation_history（注入 system prompt）、tools schema 发给 Claude API
-2. Claude 返回 `stop_reason="tool_use"`，里面包含一个或多个 `tool_use` 块（如调用 `search_course_content` 工具，参数 `query="MCP protocol"`，可能还带 `course_name` / `lesson_number` 过滤器）
-3. **执行工具**：通过 `tool_manager.execute_tool(name, **args)` 派发到 `CourseSearchTool` 或 `CourseOutlineTool`
-4. 把工具结果包成 `tool_result` 块，附到 messages 末尾
-5. **第二次请求**：再次调用 Claude，这次它会根据工具结果生成最终回答（`stop_reason="end_turn"`）
-6. 返回纯文本回答
+```
+messages = [user_query]
+for _ in range(MAX_TOOL_ROUNDS):          # 默认 2
+    response = claude.messages.create(messages, tools=...)
+    if response.stop_reason != "tool_use":
+        return extract_text(response)     # 模型给出了最终文本，结束
+    # 执行所有 tool_use block，追加 assistant + tool_result 到 messages
+    messages.append(assistant_turn)
+    messages.append(tool_results)
+# 预算耗尽兜底：再调一次，这次不带 tools，强制出文本
+final = claude.messages.create(messages, tools=None)
+return extract_text(final)
+```
 
-⚠️ 这是**单轮**——Claude 只能调一次工具就必须出最终答案。如果第一次搜索结果不理想，模型没有第二次重新搜索的机会。
+具体流程：
+
+1. **第一次请求**：把 query、conversation_history（注入 system prompt）、tools schema 发给 Claude
+2. Claude 返回 `stop_reason="tool_use"`，里面一个或多个 `tool_use` 块（比如调 `search_course_content`，参数 `query="MCP transports"`，可能还带 `course_name` / `lesson_number` 过滤器）
+3. **执行工具**：`tool_manager.execute_tool(name, **args)` 派发到 `CourseSearchTool` 或 `CourseOutlineTool`
+4. 工具结果包成 `tool_result` 块追加到 messages
+5. **下一轮请求**：再次带着 `tools` 调 Claude。模型可以**改写 query 再搜一次**（比如发现第一次搜错课），也可以直接返回文本答案
+6. 最多 2 轮工具后，如果模型**还想调工具**但预算用光，做一次**不带 tools** 的兜底请求，强制 Claude 出文本——避免无限循环
+7. 返回纯文本答案
+
+**为什么是多轮**：单轮时如果第一次搜索没命中（query 模糊、过滤错、搜错课），模型只能拿着不够用的结果硬答，甚至返回空文本。多轮让 Claude 看到第一次结果不理想时可以重试。实测在 4 条刁钻 query 上 3 条从"空答案"变成正确答案——详见 `evals/README.md` 改进记录 2026-04-08，以及 `evals/ab_multiround.py` 的 A/B 脚本。
+
+**Sources 累积**：`CourseSearchTool.last_sources` 在多轮之间**追加 + 按 `(label, link)` 去重**，避免 round 2 的 sources 覆盖 round 1。`ToolManager.reset_sources()` 在每个用户 query 之间清空。
 
 ### 5. 搜索工具 / `api/search_tools.py`
 
