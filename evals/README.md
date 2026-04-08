@@ -82,6 +82,31 @@ NDCG 能处理 MRR 处理不了的两件事：
 （删除 `db/chroma_db/` 后跑 `python -m db.ingest --clear`），然后重跑评估，
 并与之前的 baseline 文件做 diff。
 
+## 改进记录
+
+### 2026-04-07 — 统一 chunk 前缀
+
+**改动**：`db/document_processor.py` 重构后，每个 chunk 都加上
+`"Course <title> Lesson N content: ..."` 前缀。之前的实现里，只有每节的
+**第一个** chunk 有 `"Lesson N content: "` 前缀（且不带课程名），
+其余 chunk 是裸文本——只有"最后一节"是个例外，每个 chunk 都带完整前缀。
+这是历史不一致，重构时统一为"全部 chunk 都带完整前缀"。
+
+**指标变化**（n=128）：
+
+| 指标 | 前 | 后 | 变化 |
+|---|---|---|---|
+| mrr      | 0.7887 | **0.8033** | +1.5pp |
+| recall@1 | 0.6953 | **0.7109** | +1.6pp |
+| recall@3 | 0.9062 | 0.8984     | −0.8pp |
+| recall@5 | 0.9219 | 0.9219     | 持平 |
+
+**解读**：净改进。2 题从 rank 2/3 爬到了 rank 1（mrr 和 recall@1 上升），
+1 题从 top-3 滑到了 top-5（recall@3 微降），但 recall@5 不变意味着
+**没有任何题真的丢失**——只是顶端排名重排。机制是前缀给每个 chunk 单独
+加上了课程/课时锚点，让强信号更突出，但同时把同一节内不同 chunk 在
+embedding 空间里推得更近，造成顶端竞争更紧。
+
 ## Sanity 检查
 
 - 抽检 `groundtruth_retrieval.jsonl` 中的 10 条记录——问题应该是**改写**，
