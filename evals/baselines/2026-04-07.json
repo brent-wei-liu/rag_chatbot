@@ -9,39 +9,39 @@
   },
   "overall": {
     "n": 128,
-    "mrr": 0.7887,
-    "recall@1": 0.6953,
-    "recall@3": 0.9062,
+    "mrr": 0.8033,
+    "recall@1": 0.7109,
+    "recall@3": 0.8984,
     "recall@5": 0.9219
   },
   "by_course": {
     "Building Towards Computer Use with Anthropic": {
       "n": 32,
-      "mrr": 0.8646,
-      "recall@1": 0.7812,
-      "recall@3": 0.9688,
+      "mrr": 0.85,
+      "recall@1": 0.75,
+      "recall@3": 0.9375,
       "recall@5": 0.9688
     },
     "MCP: Build Rich-Context AI Apps with Anthropic": {
       "n": 44,
-      "mrr": 0.7337,
-      "recall@1": 0.5909,
-      "recall@3": 0.9091,
+      "mrr": 0.7765,
+      "recall@1": 0.6364,
+      "recall@3": 0.9545,
       "recall@5": 0.9545
     },
     "Advanced Retrieval for AI with Chroma": {
       "n": 28,
-      "mrr": 0.7798,
+      "mrr": 0.7946,
       "recall@1": 0.75,
       "recall@3": 0.8214,
-      "recall@5": 0.8214
+      "recall@5": 0.8571
     },
     "Prompt Compression and Query Optimization": {
       "n": 24,
-      "mrr": 0.7986,
-      "recall@1": 0.7083,
-      "recall@3": 0.9167,
-      "recall@5": 0.9167
+      "mrr": 0.8,
+      "recall@1": 0.75,
+      "recall@3": 0.8333,
+      "recall@5": 0.875
     }
   },
   "miss_count": 10,
@@ -51,12 +51,12 @@
       "expected": "Building Towards Computer Use with Anthropic L1"
     },
     {
-      "question": "What library is used to provide a high-level interface for building the MCP server in this workflow?",
-      "expected": "MCP: Build Rich-Context AI Apps with Anthropic L4"
+      "question": "In the demonstration described, which two external services were connected via MCP to read issues from one platform and create tasks in another?",
+      "expected": "MCP: Build Rich-Context AI Apps with Anthropic L1"
     },
     {
-      "question": "How does the sampling primitive change the typical direction of communication in MCP, and what is a practical scenario where it would be useful?",
-      "expected": "MCP: Build Rich-Context AI Apps with Anthropic L10"
+      "question": "What two Python functions are created to interact with the arXiv repository, and what does each one do?",
+      "expected": "MCP: Build Rich-Context AI Apps with Anthropic L3"
     },
     {
       "question": "What is a cross encoder, and how is it used to improve retrieval results in RAG systems?",
@@ -71,10 +71,6 @@
       "expected": "Advanced Retrieval for AI with Chroma L6"
     },
     {
-      "question": "How could the embedding adapter approach be extended beyond a simple model to potentially achieve better results?",
-      "expected": "Advanced Retrieval for AI with Chroma L6"
-    },
-    {
       "question": "What recent research direction involves modifying large language models themselves to better handle and think through retrieved information?",
       "expected": "Advanced Retrieval for AI with Chroma L6"
     },
@@ -85,6 +81,10 @@
     {
       "question": "If you wanted to build an AI application that provides context-aware answers using your own private data without fine-tuning the language model, which system design pattern would you use and why?",
       "expected": "Prompt Compression and Query Optimization L1"
+    },
+    {
+      "question": "What library is used in the lesson to perform prompt compression, and what smaller model setup does it require?",
+      "expected": "Prompt Compression and Query Optimization L5"
     }
   ]
 }
