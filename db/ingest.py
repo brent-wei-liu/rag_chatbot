@@ -44,6 +44,14 @@ def ingest(docs_path: str, clear_existing: bool) -> tuple[int, int]:
 
         try:
             course, course_chunks = processor.process_course_document(file_path)
+            # Debug: per-lesson chunk count breakdown
+            from collections import Counter
+            per_lesson = Counter(c.lesson_number for c in course_chunks)
+            breakdown = ", ".join(
+                f"L{k if k is not None else '?'}={v}"
+                for k, v in sorted(per_lesson.items(), key=lambda x: (x[0] is None, x[0]))
+            )
+            print(f"  [debug] {file_name}: {len(course_chunks)} chunks across {len(per_lesson)} lesson(s) -> {breakdown}")
         except Exception as e:
             print(f"  error parsing {file_name}: {e}", file=sys.stderr)
             continue
