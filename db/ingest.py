@@ -51,7 +51,8 @@ def ingest(docs_path: str, clear_existing: bool) -> tuple[int, int]:
                 f"L{k if k is not None else '?'}={v}"
                 for k, v in sorted(per_lesson.items(), key=lambda x: (x[0] is None, x[0]))
             )
-            print(f"  [debug] {file_name}: {len(course_chunks)} chunks across {len(per_lesson)} lesson(s) -> {breakdown}")
+            size_mb = os.path.getsize(file_path) / (1024 * 1024)
+            print(f"  [debug] {file_name} ({size_mb:.2f} MB): {len(course_chunks)} chunks across {len(per_lesson)} lesson(s) -> {breakdown}")
         except Exception as e:
             print(f"  error parsing {file_name}: {e}", file=sys.stderr)
             continue
