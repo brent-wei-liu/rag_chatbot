@@ -15,7 +15,7 @@ uv sync
 # Run the application (starts FastAPI on port 8000)
 ./run.sh
 # Or manually:
-cd backend && uv run uvicorn app:app --reload --port 8000
+uv run uvicorn api.app:app --reload --port 8000
 ```
 
 No test suite exists. The app serves at http://localhost:8000 (web UI) and http://localhost:8000/docs (API docs).
@@ -45,6 +45,6 @@ Requires `ANTHROPIC_API_KEY` in `.env` at project root (see `.env.example`). Pyt
 ## Key Details
 
 - The server runs from `backend/` as working directory — all relative paths in backend code are relative to `backend/` (e.g., `../docs`, `../frontend`).
-- ChromaDB data persists to `backend/chroma_db/`.
+- ChromaDB data persists to `db/chroma_db/`.
 - The AI uses Claude's tool-use feature for search rather than directly injecting context into prompts.
 - Tool execution is single-round: Claude calls a tool once, gets results, then produces a final answer.
