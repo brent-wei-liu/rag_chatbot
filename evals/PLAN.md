@@ -56,7 +56,7 @@
 - 检索查询改写是否合理（不是简单透传原问题）
 - 是否过度调用 / 不必要调用
 
-**实现**：在 `AIGenerator._handle_tool_execution()` 里加可选的 trace hook，把每次 tool_use 序列化成 JSON dump 到 `evals/traces/`。然后写一个轻量分析脚本统计工具使用分布。
+**实现**：在 `AIGenerator.generate_response()` 的多轮循环里加可选的 trace hook，把每轮的 tool_use / tool_result 序列化成 JSON dump 到 `evals/traces/`。然后写一个轻量分析脚本统计工具使用分布（单轮 vs 两轮比例、query 改写模式等）。
 
 **为什么单独做**：tool-use RAG 的失败模式经常是「Claude 选错了工具」或「检索 query 写得太宽」，这是直接注入式 RAG 没有的失败模式，必须单独覆盖。
 

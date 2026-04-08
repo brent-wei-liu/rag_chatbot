@@ -12,31 +12,47 @@ A RAG (Retrieval-Augmented Generation) chatbot for course materials. Users ask q
 # Install dependencies
 uv sync
 
-# Run the application (starts FastAPI on port 8000)
+# Run the application (ingest docs, then start FastAPI on port 8000)
 ./run.sh
-# Or manually:
+# Or manually, two steps:
+uv run python -m db.ingest --docs docs           # idempotent; skips already-ingested courses
 uv run uvicorn api.app:app --reload --port 8000
+
+# Retrieval eval (Recall@k, MRR). Only regression gate — no unit test framework.
+uv run python evals/run_retrieval_eval.py
+
+# Manual A/B for multi-round tool-use (N=1 vs N=2 answer quality)
+uv run python evals/ab_multiround.py
 ```
 
-No test suite exists. The app serves at http://localhost:8000 (web UI) and http://localhost:8000/docs (API docs).
+The app serves at http://localhost:8000 (web UI) and http://localhost:8000/docs (API docs).
 
 ## Architecture
 
-**Backend** (`backend/`) — Python with FastAPI, all modules use relative imports from the `backend/` directory:
+The backend is split into three top-level Python modules that communicate through a shared `core/` package. All modules are run from the project root (not from inside their own directory).
 
-- `app.py` — FastAPI entry point. Mounts `frontend/` as static files at `/`. Two API endpoints: `POST /api/query` (RAG query) and `GET /api/courses` (course stats). Loads documents from `../docs` on startup.
-- `rag_system.py` — Central orchestrator. Wires together document processing, vector store, AI generation, session management, and tool-based search. The `query()` method is the main flow: build prompt → get history → call AI with tools → collect sources → update session.
-- `ai_generator.py` — Anthropic Claude API client. Implements a tool-use loop: sends initial request, if Claude wants to use a tool, executes it via `ToolManager`, then sends results back for a final response (single round only).
-- `search_tools.py` — Tool abstraction layer. `Tool` ABC defines the interface. `CourseSearchTool` wraps vector store search as an Anthropic tool-use compatible tool. `ToolManager` registers tools and dispatches execution by name.
-- `vector_store.py` — ChromaDB wrapper with two collections: `course_catalog` (course metadata, title as ID) and `course_content` (chunked text). `search()` optionally resolves fuzzy course names via catalog before searching content.
-- `document_processor.py` — Parses course `.txt` files with a specific format (Course Title/Link/Instructor header, then `Lesson N:` sections). Chunks text by sentences respecting `CHUNK_SIZE`/`CHUNK_OVERLAP`.
-- `session_manager.py` — In-memory conversation history per session. Conversation is passed as formatted text in the system prompt (not as message history).
+**`core/`** — shared code, imported by both `db/` and `api/`:
+- `config.py` — Dataclass config loaded from env vars. Key settings: `CHUNK_SIZE=800`, `CHUNK_OVERLAP=100`, `MAX_RESULTS=5`, `MAX_HISTORY=2`, `MAX_TOOL_ROUNDS=2`, `CHROMA_PATH=./db/chroma_db`.
 - `models.py` — Pydantic models: `Course`, `Lesson`, `CourseChunk`.
-- `config.py` — Dataclass config loaded from env vars. Key settings: `CHUNK_SIZE=800`, `CHUNK_OVERLAP=100`, `MAX_RESULTS=5`, `MAX_HISTORY=2`.
+- `vector_store.py` — ChromaDB wrapper with two collections: `course_catalog` (course metadata, title as ID) and `course_content` (chunked text). `search()` optionally resolves fuzzy course names via the catalog before searching content.
 
-**Frontend** (`frontend/`) — Static HTML/CSS/JS served by FastAPI. No build step.
+**`db/`** — offline data layer (CLI, write-only to the vector store):
+- `ingest.py` — CLI entry point: `python -m db.ingest [--docs path] [--clear]`. Iterates files, parses via `DocumentProcessor`, writes to ChromaDB via `core.vector_store`. Idempotent (skips courses by title).
+- `document_processor.py` — Parses course `.txt` files (Course Title/Link/Instructor header, then `Lesson N:` sections). Chunks by sentence respecting `CHUNK_SIZE`/`CHUNK_OVERLAP`, prefixes each chunk with `"Course <title> Lesson <N> content: "` before embedding.
+- `chroma_db/` — ChromaDB persistence (sqlite + HNSW .bin segments). Gitignored.
 
-**Data** (`docs/`) — Course transcript `.txt` files with structured headers.
+**`api/`** — online FastAPI service (read-only to the vector store):
+- `app.py` — FastAPI entry point. Mounts `frontend/` as static files at `/`. Endpoints: `POST /api/query` and `GET /api/courses`. Does **not** read `docs/` on startup — ingestion is a separate CLI step.
+- `rag_system.py` — Central orchestrator. The `query()` method: build prompt → get history → call AI with tools → collect sources → update session.
+- `ai_generator.py` — Anthropic Claude client. Implements a **multi-round tool-use loop** capped at `config.MAX_TOOL_ROUNDS = 2`. Each round: call Claude → if `stop_reason == "tool_use"`, execute tools via `ToolManager` and append `tool_result` blocks → loop. If the cap is hit with the model still wanting tools, one final tool-less request forces a text answer. `CourseSearchTool.last_sources` accumulates + dedupes across rounds.
+- `search_tools.py` — Tool abstraction. `Tool` ABC, `CourseSearchTool`, `CourseOutlineTool`, `ToolManager` (registration + dispatch by name).
+- `session_manager.py` — In-memory conversation history per session. Passed as formatted text in the system prompt (not as message history).
+
+**`evals/`** — retrieval evaluation harness (Recall@k, MRR) + A/B scripts. The only regression gate — no unit test framework.
+
+**`frontend/`** — Static HTML/CSS/JS served by FastAPI. No build step.
+
+**`docs/`** — Course transcript `.txt` files with structured headers.
 
 ## Environment
 
@@ -44,7 +60,8 @@ Requires `ANTHROPIC_API_KEY` in `.env` at project root (see `.env.example`). Pyt
 
 ## Key Details
 
-- The server runs from `backend/` as working directory — all relative paths in backend code are relative to `backend/` (e.g., `../docs`, `../frontend`).
+- The server and CLI both run from the project **root** (not from inside `api/` or `db/`). Imports are absolute (`from core.config import config`, `from api.rag_system import RAGSystem`, etc.).
 - ChromaDB data persists to `db/chroma_db/`.
+- `api/` is **read-only** to the vector store. `db/ingest` is the only writer. Ingestion is a separate CLI step — the API server does **not** read `docs/` on startup.
 - The AI uses Claude's tool-use feature for search rather than directly injecting context into prompts.
-- Tool execution is single-round: Claude calls a tool once, gets results, then produces a final answer.
+- Tool execution is **multi-round**, capped at `config.MAX_TOOL_ROUNDS = 2`: Claude can call tools, see results, and call tools again before producing a final answer. If the cap is hit, a final tool-less request forces a text answer.

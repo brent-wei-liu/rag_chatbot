@@ -32,7 +32,7 @@ uv run uvicorn api.app:app --reload --port 8000
 
 - `app.py` — FastAPI 入口。定义接口、把 `frontend/` 挂载为静态文件、实例化全局 `RAGSystem`。
 - `rag_system.py` — 编排器。`query()` 构建 prompt、取会话历史、带工具调用 AI、收集来源、更新会话。
-- `ai_generator.py` — Anthropic Claude 客户端。实现单轮 tool-use 循环：初次请求 → 若 Claude 调用工具，则通过 `ToolManager` 执行 → 把结果回传换取最终回答。
+- `ai_generator.py` — Anthropic Claude 客户端。实现**多轮 tool-use 循环**，最多 `config.MAX_TOOL_ROUNDS = 2` 轮：每轮调用 Claude，若 `stop_reason == "tool_use"` 则通过 `ToolManager` 执行工具并把 `tool_result` 追加到 messages，继续下一轮；若模型返回文本则直接返回。耗尽预算后再做一次**不带 tools** 的请求强制出文本。`CourseSearchTool.last_sources` 在轮与轮之间追加 + 按 `(label, link)` 去重。设计细节见 `docs/superpowers/specs/2026-04-07-multi-round-tool-use-design.md`，A/B 结果见 `evals/README.md` 改进记录。
 - `search_tools.py` — 工具抽象层。`Tool` 抽象基类、`CourseSearchTool` 与 `CourseOutlineTool`（都封装 `core.vector_store`）、负责注册与分发的 `ToolManager`。
 - `session_manager.py` — 内存中按 session 存对话历史。历史以格式化文本注入 system prompt，而非作为 message history。
 
