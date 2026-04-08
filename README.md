@@ -33,7 +33,7 @@
 | **过滤** | 硬编码或无 | Claude 决定是否按课程/课时过滤 |
 | **流程** | 问题 → 搜索 → Prompt → 回答 | 问题 → Claude → 工具调用 → 搜索 → 回答 |
 
-关键组件是 `CourseSearchTool`（`backend/search_tools.py`），它将 ChromaDB 向量库封装为兼容 Anthropic 工具调用的工具。当用户提问时，Claude 接收问题和工具定义，决定搜索什么内容（以及是否按课程名或课时编号过滤），调用工具，接收结果，然后生成有依据的回答。
+关键组件是 `CourseSearchTool`（`api/search_tools.py`），它将 ChromaDB 向量库封装为兼容 Anthropic 工具调用的工具。当用户提问时，Claude 接收问题和工具定义，决定搜索什么内容（以及是否按课程名或课时编号过滤），调用工具，接收结果，然后生成有依据的回答。
 
 底层搜索仍然是访问本地 ChromaDB——工具只是让 **Claude 主导搜索策略**，而不是在后端硬编码。
 
@@ -63,11 +63,25 @@
    ANTHROPIC_API_KEY=your_anthropic_api_key_here
    ```
 
+## 项目结构
+
+代码按职责拆为三个顶层模块：
+
+| 目录 | 职责 | README |
+|---|---|---|
+| `core/` | 共享代码：Pydantic 模型、配置、ChromaDB 封装 | — |
+| `db/` | 离线数据层：文档解析、摄取 CLI、ChromaDB 持久化目录 | [db/README.md](db/README.md) |
+| `api/` | 在线 FastAPI 服务：HTTP 接口、Claude tool-use 编排、会话管理 | [api/README.md](api/README.md) |
+| `evals/` | 检索评估工具（Recall@k、MRR） | [evals/README.md](evals/README.md) |
+| `frontend/` | 静态 HTML/CSS/JS 前端 | — |
+
+`api/` 对向量库**只读**，`db/` 负责**写入**——两者通过 `core/vector_store` 共享同一份 ChromaDB 数据，但运行时完全解耦。
+
 ## 运行应用
 
 ### 快速启动
 
-使用提供的 shell 脚本：
+使用提供的 shell 脚本（先摄取文档，再启动 API）：
 ```bash
 chmod +x run.sh
 ./run.sh
@@ -75,7 +89,13 @@ chmod +x run.sh
 
 ### 手动启动
 
+分两步：
+
 ```bash
+# 1. 摄取文档到 ChromaDB（幂等，已存在的课程会跳过）
+uv run python -m db.ingest --docs docs
+
+# 2. 启动 API
 uv run uvicorn api.app:app --reload --port 8000
 ```
 
