@@ -22,7 +22,7 @@ class Config:
     MAX_HISTORY: int = 2         # Number of conversation messages to remember
     
     # Database paths
-    CHROMA_PATH: str = "./chroma_db"  # ChromaDB storage location
+    CHROMA_PATH: str = "./db/chroma_db"  # ChromaDB storage location (relative to project root)
 
 config = Config()
 
