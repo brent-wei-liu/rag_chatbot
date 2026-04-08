@@ -127,10 +127,23 @@ function addMessage(content, type, sources = null, isWelcome = false) {
     let html = `<div class="message-content">${displayContent}</div>`;
     
     if (sources && sources.length > 0) {
+        // Deduplicate sources by label
+        const seen = new Set();
+        const unique = sources.filter(s => {
+            if (seen.has(s.label)) return false;
+            seen.add(s.label);
+            return true;
+        });
+        const sourceItems = unique.map(s => {
+            if (s.link) {
+                return `<a class="source-tag source-link" href="${escapeHtml(s.link)}" target="_blank" rel="noopener">${escapeHtml(s.label)}</a>`;
+            }
+            return `<span class="source-tag">${escapeHtml(s.label)}</span>`;
+        }).join('');
         html += `
             <details class="sources-collapsible">
                 <summary class="sources-header">Sources</summary>
-                <div class="sources-content">${sources.join(', ')}</div>
+                <div class="sources-content">${sourceItems}</div>
             </details>
         `;
     }
