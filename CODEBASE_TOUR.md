@@ -34,11 +34,21 @@ project-root/
 | `db/` | 文档解析、ingest CLI、ChromaDB 数据目录 | **不**被 `api/` 引用 |
 | `api/` | FastAPI 服务、Claude tool-use 调度、会话管理 | 启动时**不读** `docs/` |
 
-### 关键设计：工具调用 vs 直接注入
+### 关键设计：tool-use RAG (agentic) vs 传统直接注入式 RAG
 
-传统 RAG 是"问题 → 搜索 → 拼 prompt → 让模型回答"。本项目反过来：把搜索包装成 **Claude 工具**，让模型自己决定**何时搜、搜什么、怎么过滤**。检索的智能从后端硬编码移到了模型本身。
+本项目是 **tool-use RAG（agentic RAG）**，传统是 **直接注入式 RAG**。本质区别：
 
-The non-obvious design choice: instead of "query → search → stuff into prompt → answer", we expose search as a **tool** to Claude and let the model decide *when* to search, *what* to search for, and *whether* to filter by course/lesson. Search intelligence lives in the model, not in hardcoded backend logic.
+| | 传统 RAG | 本项目 |
+|---|---|---|
+| **检索触发** | 每次请求都强制检索 | Claude 自主决定是否检索、检索什么 |
+| **流程** | retrieve → stuff into prompt → generate（固定一次） | LLM 循环：思考 → 调工具 → 看结果 → 再调工具/出答案（最多 `MAX_TOOL_ROUNDS=2` 轮） |
+| **query** | 用户原问题直接做 embedding | Claude 改写/拆解后作为 tool 参数传入 |
+| **工具选择** | 只有一个检索器 | 多工具（`search_course_content` vs `get_course_outline`），模型自己挑 |
+| **多步推理** | 做不到（除非外层手写 pipeline） | 原生支持：先查大纲 → 再查具体 lesson |
+| **失败恢复** | 第一次检索错了就完蛋 | 看到烂结果可以改写 query 再搜一次 |
+| **闲聊/无关问题** | 照样检索，浪费且污染 context | 模型可以不调工具直接回答 |
+
+核心差异一句话：**传统 RAG 把检索当成 prompt 预处理；本项目把检索当成 LLM 可调用的动作**，所以 Claude 能像 agent 一样规划「要不要查、查什么、查完够不够、要不要再查」。代价是多一次 API 往返和更复杂的循环控制（见 `api/ai_generator.py` 的多轮 loop + 兜底调用）。
 
 ### 技术栈 / Tech stack
 
@@ -172,6 +182,43 @@ return extract_text(final)
 **为什么是多轮**：单轮时如果第一次搜索没命中（query 模糊、过滤错、搜错课），模型只能拿着不够用的结果硬答，甚至返回空文本。多轮让 Claude 看到第一次结果不理想时可以重试。实测在 4 条刁钻 query 上 3 条从"空答案"变成正确答案——详见 `evals/README.md` 改进记录 2026-04-08，以及 `evals/ab_multiround.py` 的 A/B 脚本。
 
 **Sources 累积**：`CourseSearchTool.last_sources` 在多轮之间**追加 + 按 `(label, link)` 去重**，避免 round 2 的 sources 覆盖 round 1。`ToolManager.reset_sources()` 在每个用户 query 之间清空。
+
+#### Tool-use 的四个关键组成部分
+
+1. **工具定义** (`api/search_tools.py`) —— `Tool` ABC 要求每个工具实现 `get_tool_definition()` 返回 Anthropic 格式的 JSON schema（name / description / input_schema）。`CourseSearchTool` 和 `CourseOutlineTool` 各自定义好自己的参数结构。
+2. **工具注册/派发** (`ToolManager`) —— 一个 `name -> Tool` 字典。`get_tool_definitions()` 把所有工具的 schema 收集起来传给 Claude；`execute_tool(name, **kwargs)` 按名字派发到具体实现。
+3. **循环协议**（上面的伪代码）—— 遵循 Anthropic tool-use 规范：
+   - `stop_reason == "tool_use"` 表示模型想调工具
+   - 把模型的 `assistant` turn（含 `tool_use` 块）原样追加回 messages
+   - 每个 `tool_use` 块配一个 `tool_result` 块（靠 `tool_use_id` 配对），以 `user` role 追加
+   - 下一轮 Claude 就能"看到"上一轮的工具结果
+4. **兜底 + sources 累积**：
+   - 循环用完还想调工具 → 最后一次调用**不传 `tools`**，强制模型出文本（否则可能死循环或返回空）
+   - `CourseSearchTool.last_sources` 跨轮追加 + 按 `(label, link)` 去重，`ToolManager.reset_sources()` 每个 query 之间清空
+
+**和传统 RAG 的代码层面差异**：传统是 `results = vector_store.search(query); prompt = template.format(results); claude.messages.create(prompt)` —— 一条直线。这里是循环 + 把 `tools` 参数交给 Claude，检索调用的主动权从后端代码转移到模型。
+
+#### 这些 tool 通用吗？—— 不，是针对课程文档精心设计的
+
+本项目的两个 tool 是**针对课程文档结构定制的**，不通用。但要区分两层：
+
+| 层 | 是否通用 |
+|---|---|
+| `ai_generator.py` 的多轮 tool-use 循环 + 兜底 + sources 累积 | ✅ 完全通用，换领域不用改 |
+| `search_tools.py` 里具体的两个 tool + schema + `document_processor` + collection 设计 | ❌ 课程领域定制 |
+
+**定制点**：
+
+1. **文档结构假设写死了** —— `docs/*.txt` 必须是 `Course Title / Link / Instructor` 头部 + `Lesson N:` 分段；`db/document_processor.py` 的正则直接匹配这个格式
+2. **Tool 参数是领域概念** —— `course_name`、`lesson_number` 换个领域（法律、代码、医疗）就完全无意义；`CourseOutlineTool` 更是假设"文档有大纲层级"
+3. **Tool description 是领域话术** —— "Search course materials"、"Course title"、"lesson number" 这些词直接影响 Claude 什么时候选这个工具
+4. **双 collection 设计** —— `course_catalog` + `course_content` 的"目录 + 内容"双粒度结构，是因为课程天然有这两层；扁平语料没必要
+
+**要变成通用 RAG 需要动什么**：`document_processor.py` 重写、metadata schema 改成通用 `source/section/page`、tool 重新定义、tool description 改成领域无关话术、system prompt 重写、可能合并成单 collection。
+
+**反直觉的点**：定制工具反而**提升**效果。Schema 本身就是对模型的 prompt——越具体，模型决策越准。一个通用的 `search(query, filters)` 会让 Claude 不知道 filters 里有哪些 key，只能瞎猜或在 description 里用一大段自然语言枚举。专门的 `course_name` 参数让 Claude 很自然地做 fuzzy 课程名解析，这是通用 `filters` 做不到的（参见 `evals/README.md` 2026-04-08 A/B 中 HyDE 那条 query 的正确命中）。
+
+**一句话**：本项目是**定制 tool + 通用循环**的组合。通用的部分是 Anthropic tool-use 协议的正确实现；不通用的部分是对"课程材料"这个领域的建模。想换领域，循环代码一行不用改，但 tool 定义、document processor、metadata schema 都得重写。
 
 ### 5. 搜索工具 / `api/search_tools.py`
 
